@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import sys
 from matplotlib import pyplot as plt
+from bisect import bisect_left
 
 # Hard-coded project parameters - Need to read from template
 surface_area_sf = 1262
@@ -14,6 +15,7 @@ length_ft = 27.583
 nMannings = np.arange(0.009, 0.033, 0.002)
 slope = 0.002
 gravity_SI = 9.81
+composite_volume_total_L = 3
 
 # Hard-coded program parameters, including conversion factors
 sf_to_m2 = 0.0929
@@ -25,10 +27,10 @@ Q_guess_factor = 2
 Q_guess_interval = 1000
 
 # Use pandas to read data template
-data = pd.read_excel(r'C:/Users/edwardt/SCCWRP/SMC BMP Projects - Regional monitoring network/Flow Calculations from Depth - M1 Backwater Curve/Flow Calculation from Depth.xlsx', sheet_name='For Python')
+data = pd.read_excel(r'C:/Users/edwardt/SCCWRP/SMC BMP Projects - Regional monitoring network/Flow Calculations from Depth - M1 Backwater Curve/EMC_calculator_repo/Flow Calculation from Depth.xlsx', sheet_name='For Python')
 df_depth = pd.DataFrame(data, columns=['Elapsed Time Depth (min)', 'y1 (in)', 'y2 (in)'])
 df_flow = pd.DataFrame(data, columns=['Elapsed Time Flow (min)', 'Exfiltration (cfs)'])
-df_result = pd.DataFrame(data, columns=['SFSH Q (cfs)', 'GVPF Q (cfs)'])
+df_sample = pd.DataFrame(data, columns=['Elapsed Time Sample (min)'])
 
 # Strip out NA's from dataframes, store as 1D-list variables
 y1_depth = df_depth['y1 (in)'][df_depth['y1 (in)'].notna()]
@@ -36,6 +38,7 @@ y2_depth = df_depth['y2 (in)'][df_depth['y2 (in)'].notna()]
 y_time = df_depth['Elapsed Time Depth (min)'][df_depth['Elapsed Time Depth (min)'].notna()]
 Qex_time = df_flow['Elapsed Time Flow (min)'][df_flow['Elapsed Time Flow (min)'].notna()]
 Qex_flow = df_flow['Exfiltration (cfs)'][df_flow['Exfiltration (cfs)'].notna()]
+sample_time = df_sample['Elapsed Time Sample (min)'][df_sample['Elapsed Time Sample (min)'].notna()]
 
 
 def settings_SI():
@@ -65,9 +68,12 @@ def settings_SI():
         if y2_depth[ii] < 0:
             y2_depth[ii] = 0
 
-    for ii in range(len(df_flow['Elapsed Time Flow (min)'])):
+    for ii in range(len(Qex_time)):
         Qex_time[ii] = float(Qex_time[ii] * min_to_sec)
         Qex_flow[ii] = Qex_flow[ii] * cfs_to_cms
+
+    for ii in range(len(sample_time)):
+        sample_time[ii] = sample_time[ii] * min_to_sec
 
     return 
 
@@ -361,7 +367,7 @@ def SandFilter_CV(y2_depth, y_time, Q_exfil, Q_exfil_time):
     Qin_SFSH[0] = 0
     
     # Manage the outflow timeseries so that it matches the depth timeseries
-    Q_exfil_short = Q_exfil_mask(y_time, Q_exfil, Q_exfil_time)
+    Q_exfil_short = timeseries_mask_to_depth(y_time, Q_exfil, Q_exfil_time)
 
     # Storage equation needs the change in depth with time
     for ii in range(len(y2_depth)-1):
@@ -377,7 +383,7 @@ def SandFilter_CV(y2_depth, y_time, Q_exfil, Q_exfil_time):
         d_storage = dydt*surface_area_new
 
         # Calculate the inflow as the change 
-        Qin_SFSH[ii] = d_storage + Q_exfil_short[ii]
+        Qin_SFSH[ii+1] = d_storage + Q_exfil_short[ii+1]
 
     # Return the inflow and (adjusted) outflow timeseries.  These are the same shape as y_time
     return Qin_SFSH, Q_exfil_short
@@ -395,11 +401,7 @@ def surface_area(y2):
     return surface_area_m2 + additional_sa
 
 
-def null():
-    return 
-
-
-def Q_exfil_mask(y_time, Qex_flow, Qex_time):
+def timeseries_mask_to_depth(y_time, Qex_flow, Qex_time):
     """
     This subroutine is used to align the outflow timeseries with the depth timeseries so they can be used
     in the Storage equation more easily
@@ -427,7 +429,87 @@ def volume_calc(y_series, x_series):
     return volume
 
 
-def main():
+def match_sample_to_inflow(sample_timeseries, y_time, Qinflow):
+    Q_sample = []
+    sample_timeseries = list(sample_timeseries)
+    y_time = list(y_time)
+    Qinflow = list(Qinflow)
+
+    # When the outflow timeseries elapsed time is aligned with the depth timeseries elapsed time, include value in the masked outflow timeseries
+    for ii in range(len(y_time)):
+        if y_time[ii] in sample_timeseries:
+            Q_sample.append(Qinflow[ii])
+
+    return Q_sample
+
+
+def volume_alloc(sample_timeseries, y_time, Qinflow, Comp_Vol):
+
+    sample_timeseries = list(sample_timeseries)
+    sample_volumes = []
+    y_time = list(y_time)
+    Qinflow = list(Qinflow)
+    sample_timeseries = [0] + sample_timeseries + [y_time[-1]]
+
+    sample_leftedge = 0
+    time_index_left = 0
+    sample_rightedge = np.average([sample_timeseries[1], sample_timeseries[2]])
+    time_index_right = y_time.index(take_closest(y_time, sample_rightedge))
+
+    Qinflow_snip = Qinflow[time_index_left:time_index_right+1]
+    y_time_snip = y_time[time_index_left:time_index_right+1]
+    volume_snip = volume_calc(Qinflow_snip, y_time_snip)
+    sample_volumes.append(volume_snip)
+
+    for ii in range(2, len(sample_timeseries)-1):
+
+        sample_leftedge = np.average([sample_timeseries[ii-1], sample_timeseries[ii]])
+        time_index_left = y_time.index(take_closest(y_time, sample_leftedge))
+
+        sample_rightedge = np.average([sample_timeseries[ii], sample_timeseries[ii+1]])
+        time_index_right = y_time.index(take_closest(y_time, sample_rightedge))
+        
+        Qinflow_snip = Qinflow[time_index_left:time_index_right+1]
+        y_time_snip = y_time[time_index_left:time_index_right+1]
+        volume_snip = volume_calc(Qinflow_snip, y_time_snip)
+        sample_volumes.append(volume_snip)
+
+
+    sample_leftedge = np.average([sample_timeseries[-2], sample_timeseries[-1]])
+    time_index_left = y_time.index(take_closest(y_time, sample_leftedge))
+
+    Qinflow_snip = Qinflow[time_index_left:]
+    y_time_snip = y_time[time_index_left:]
+    volume_snip = volume_calc(Qinflow_snip, y_time_snip)
+    sample_volumes.append(volume_snip)
+
+    vol_total = sum(sample_volumes)
+    volume_allocated = np.empty(len(sample_volumes))
+    for ss in range(len(sample_volumes)):
+        volume_allocated[ss] = sample_volumes[ss] / vol_total
+    return volume_allocated
+
+
+def take_closest(myList, myNumber):
+    """
+    Assumes myList is sorted. Returns closest value to myNumber.
+
+    If two numbers are equally close, return the smallest number.
+    """
+    pos = bisect_left(myList, myNumber)
+    if pos == 0:
+        return myList[0]
+    if pos == len(myList):
+        return myList[-1]
+    before = myList[pos - 1]
+    after = myList[pos]
+    if after - myNumber < myNumber - before:
+        return after
+    else:
+        return before
+
+
+def determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nMannings, sample_time):
     settings_SI()
 
     # The Sand Filter CV method takes place outside of the nManning's calibration for-loop
@@ -441,20 +523,26 @@ def main():
     for nM in range(len(nMannings)):
         for yy in range(len(y_time)):
 
+            nMannings[nM] = 0.0185
             Qin_mannings[yy] = mannings_eq_flow(y1_depth[yy], y2_depth[yy], nMannings[nM])
             Qin_energy[yy] = Energy_eq_check(y1_depth[yy], y2_depth[yy], nMannings[nM], Qin_mannings[yy])
 
         volumes[nM] = volume_calc(Qin_energy, y_time)
         print("nMannings: ", str(round(nMannings[nM], 4)), "Inflow Volume", str(round(volumes[nM], 5)))
 
+        Qin_sample = match_sample_to_inflow(sample_time, y_time, Q_exfil)
+
+        emc_alloc = volume_alloc(sample_time, y_time, Q_exfil, composite_volume_total_L)
+        result = [round(item, 3) for item in emc_alloc]
 
         fig, ax = plt.subplots()
-        fig.suptitle('ASF In/Out Flowrates vs Time')
-        ax.plot(y_time, Qin_SFSH, color='Red', label='Qin_SFSH')
-        ax.plot(y_time, Q_exfil, color='Green', label='Q_exfil')
-        ax.plot(Qex_time, Qex_flow, color='Green', label='Q_exfil')
-        # ax.plot(y_time[0:263], Qin_energy[0:263], color='Blue', label='Qin_energy')
-        # ax.plot(y_time[0:263], Qin_mannings[0:263], color='Black', label='Qin_energy')
+        fig.suptitle('ASF In/Out Flowrates vs Time - EMC Composite Instructions \n' + str(result))
+        ax.plot(y_time, Qin_SFSH, color='Red', label='Qin_StorageCV')
+        ax.plot(y_time, Q_exfil, color='Green', label='Qout_Exfiltration')
+        # ax.plot(Qex_time, Qex_flow, color='Green', label='Q_exfil')
+        ax.plot(y_time, Qin_energy, color='Blue', label='Qin_EnergyEq')
+        ax.plot(sample_time, Qin_sample, 'o', color='Purple', label='Inflow Sampled')
+        # ax.plot(y_time, Qin_mannings, color='Black', label='Qin_mannings')
         ax.set(xlabel="Time since start (s)", ylabel="Flowrate (cms)")
         ax.legend()
         plt.show()
@@ -468,10 +556,9 @@ def main():
         for nM in range(len(nMannings)):
             print("nMannings: ", str(round(nMannings[nM], 4)), "Inflow Volume", str(round(volumes[nM], 5)))
         sys.stdout = original_stdout # Reset the standard output to its original value
-    return
+    return Qin_energy
 
+Qin_energy = determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nMannings, sample_time)
 
-if __name__ == "__main__":
-    main()
 
 
