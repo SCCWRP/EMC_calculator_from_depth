@@ -395,6 +395,10 @@ def surface_area(y2):
     return surface_area_m2 + additional_sa
 
 
+def null():
+    return 
+
+
 def Q_exfil_mask(y_time, Qex_flow, Qex_time):
     """
     This subroutine is used to align the outflow timeseries with the depth timeseries so they can be used
