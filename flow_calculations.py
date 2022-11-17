@@ -5,6 +5,8 @@ import sys
 from matplotlib import pyplot as plt
 from bisect import bisect_left
 
+print("Hello World")
+
 # Hard-coded project parameters - Need to read from template
 surface_area_sf = 1262
 dim_width_ft = 20
