@@ -5,8 +5,6 @@ import sys
 from matplotlib import pyplot as plt
 from bisect import bisect_left
 
-print("Hello World")
-
 # Hard-coded project parameters - Need to read from template
 surface_area_sf = 1262
 dim_width_ft = 20
@@ -488,7 +486,7 @@ def volume_alloc(sample_timeseries, y_time, Qinflow, Comp_Vol):
     vol_total = sum(sample_volumes)
     volume_allocated = np.empty(len(sample_volumes))
     for ss in range(len(sample_volumes)):
-        volume_allocated[ss] = sample_volumes[ss] / vol_total
+        volume_allocated[ss] = Comp_Vol * sample_volumes[ss] / vol_total
     return volume_allocated
 
 
