@@ -1,7 +1,8 @@
-import flow_calculations as fc
+# import flow_backwater as fbw
 import pandas as pd
 import numpy as np
-import matplotlib as plt
+from matplotlib import pyplot as plt
+from bisect import bisect_left
 
 # HACK - Hard-coded project parameters - Need to read from template
 surface_area_sf = 1262
@@ -13,6 +14,7 @@ length_ft = 27.583
 nMannings = np.arange(0.009, 0.033, 0.002)
 slope = 0.002
 gravity_SI = 9.81
+comp_vol = 1000
 
 # Hard-coded program parameters, including conversion factors
 sf_to_m2 = 0.0929
@@ -23,23 +25,23 @@ cfs_to_cms = 0.0283
 Q_guess_factor = 2
 Q_guess_interval = 1000
 
+# HACK - flag for whether backwater flow calculation is needed
+fbw_needed = False
+
 
 def read_template():
-    global y1_depth, y2_depth, y_time, Qex_flow, Qex_time
+    global flow_time, sample_time, flow_value
 
 
     # Use pandas to read data template
-    data = pd.read_excel(r'C:/Users/edwardt/SCCWRP/SMC BMP Projects - Regional monitoring network/Flow Calculations from Depth - M1 Backwater Curve/Flow Calculation from Depth.xlsx', sheet_name='For Python')
-    df_depth = pd.DataFrame(data, columns=['Elapsed Time Depth (min)', 'y1 (in)', 'y2 (in)'])
-    df_flow = pd.DataFrame(data, columns=['Elapsed Time Flow (min)', 'Exfiltration (cfs)'])
-    df_result = pd.DataFrame(data, columns=['SFSH Q (cfs)', 'GVPF Q (cfs)'])
+    data = pd.read_excel(r'C:/Users/edwardt/SCCWRP/SMC BMP Projects - Regional monitoring network/Flow Calculations from Depth - M1 Backwater Curve/EMC_calculator_repo/Data Product QA/EMC_Template.xlsx', 
+        sheet_name=r'Auckland Wetland Outlet')
+    df = pd.DataFrame(data, columns=['Flow Elapsed Time (min)', 'Flow (m3/s)', 'Sample Elapsed Time (min)'])
 
     # Strip out NA's from dataframes, store as 1D-list variables
-    y1_depth = df_depth['y1 (in)'][df_depth['y1 (in)'].notna()]
-    y2_depth = df_depth['y2 (in)'][df_depth['y2 (in)'].notna()]
-    y_time = df_depth['Elapsed Time Depth (min)'][df_depth['Elapsed Time Depth (min)'].notna()]
-    Qex_time = df_flow['Elapsed Time Flow (min)'][df_flow['Elapsed Time Flow (min)'].notna()]
-    Qex_flow = df_flow['Exfiltration (cfs)'][df_flow['Exfiltration (cfs)'].notna()]
+    flow_time = df['Flow Elapsed Time (min)'][df['Flow Elapsed Time (min)'].notna()]
+    sample_time = df['Sample Elapsed Time (min)'][df['Sample Elapsed Time (min)'].notna()]
+    flow_value = df['Flow (m3/s)'][df['Flow (m3/s)'].notna()]
 
     return
 
@@ -60,31 +62,182 @@ def settings_SI():
     rh_full_m = area_full_m2/wp_full_m
 
     # Convert min -> sec, in -> m, cfs -> cms
-    for ii in range(len(y_time)):
-        y_time[ii] = y_time[ii] * min_to_sec
-        y1_depth[ii] = y1_depth[ii] * cfs_to_cms
-        y2_depth[ii] = y2_depth[ii] * cfs_to_cms
-
-        # If instrument-recorded depths are negative, set them to zero
-        if y1_depth[ii] < 0:
-            y1_depth[ii] = 0
-        if y2_depth[ii] < 0:
-            y2_depth[ii] = 0
-
-    for ii in range(len(Qex_time)):
-        Qex_time[ii] = float(Qex_time[ii] * min_to_sec)
-        Qex_flow[ii] = Qex_flow[ii] * cfs_to_cms
+    for ii in range(len(flow_time)):
+        flow_time[ii] = int(flow_time[ii] * min_to_sec)
+        flow_value[ii] = flow_value[ii] # * cfs_to_cms
+    
+    for ii in range(len(sample_time)):
+        sample_time[ii] = int(sample_time[ii] * min_to_sec)
 
     return 
 
 
+def volume_calc(y_series, x_series):
+    """
+    This subroutine calculates the trapezoidal approximation of the area under the curve
+    """
+
+    volume = np.trapz(y_series, x_series)
+    return volume
+
+
+def match_sample_to_inflow(sample_time, flow_time, flow_value):
+    """
+    This subroutine is used to map hydrograph data onto the sample times - this is for plotting purposes
+    """
+    sample_value = []
+    sample_time = list(map(int, sample_time))
+    flow_time = list(map(int, flow_time))
+    flow_value = list(flow_value)
+
+
+    # When the sample timeseries elapsed time is aligned with the flow timeseries elapsed time, include value 
+    for ii in range(len(flow_time)):
+        if flow_time[ii] in sample_time:
+            sample_value.append(flow_value[ii])
+
+    return sample_value
+
+
+def volume_alloc(sample_time, flow_time, flow_value, comp_vol):
+    """
+    This subroutine is the main EMC calculator
+
+    Loop through the samples
+        assign hydrograph segments to each sample
+        calculate the relative volume associated with that segment
+    """
+
+    # Recast as lists for easier indexing
+    sample_time = list(sample_time)
+    sample_volumes = []
+    flow_time = list(flow_time)
+    flow_value = list(flow_value)
+    sample_time = [0] + sample_time + [flow_time[-1]]
+
+    # # Hard-code for matching Auckland Wetland data better
+    # sample_leftedge = 8*60
+    # time_index_left = 4
+    # sample_rightedge = np.average([sample_time[1], sample_time[2]])
+    # time_index_right = flow_time.index(take_closest(flow_time, sample_rightedge))
+
+    # Generalized to clean data
+
+    # Interpolate between sample points to draw time-boundaries on hydrograph
+    sample_leftedge = 0
+    time_index_left = 0
+    sample_rightedge = np.average([sample_time[1], sample_time[2]])
+    time_index_right = flow_time.index(take_closest(flow_time, sample_rightedge))
+
+    print(flow_time[time_index_left]/60, flow_time[time_index_right]/60)
+
+    # Save the sample-assigned hydrograph time/values to variables
+    flow_value_snip = flow_value[time_index_left:time_index_right+1]
+    flow_time_snip = flow_time[time_index_left:time_index_right+1]
+
+    # Calculate the total volume in that hydrograph snip
+    volume_snip = volume_calc(flow_value_snip, flow_time_snip)
+    sample_volumes.append(volume_snip)
+
+    # Left and right-most boundaries are not included in loop because they must snap to the ends of the timeseries
+    for ii in range(2, len(sample_time)-2):
+
+        sample_leftedge = np.average([sample_time[ii-1], sample_time[ii]])
+        time_index_left = flow_time.index(take_closest(flow_time, sample_leftedge))
+
+        sample_rightedge = np.average([sample_time[ii], sample_time[ii+1]])
+        time_index_right = flow_time.index(take_closest(flow_time, sample_rightedge))
+
+        print(flow_time[time_index_left]/60, flow_time[time_index_right]/60)
+        
+        flow_value_snip = flow_value[time_index_left:time_index_right+1]
+        flow_time_snip = flow_time[time_index_left:time_index_right+1]
+        volume_snip = volume_calc(flow_value_snip, flow_time_snip)
+        sample_volumes.append(volume_snip)
+
+
+    # # Hard-code for matching Auckland Wetland better
+    # sample_leftedge = sample_rightedge
+    # time_index_left = flow_time.index(take_closest(flow_time, sample_leftedge))
+
+    # sample_rightedge = 1502.0*60
+    # time_index_right = flow_time.index(sample_rightedge)
+
+    # print(flow_time[time_index_left]/60, flow_time[time_index_right]/60)
+
+    # flow_value_snip = flow_value[time_index_left:time_index_right+1]
+    # flow_time_snip = flow_time[time_index_left:time_index_right+1]
+    # volume_snip = volume_calc(flow_value_snip, flow_time_snip)
+    # sample_volumes.append(volume_snip)
+
+    sample_leftedge = np.average([sample_time[-2], sample_time[-1]])
+    time_index_left = flow_time.index(take_closest(flow_time, sample_leftedge))
+
+    print(flow_time[time_index_left]/60, flow_time[time_index_right]/60)
+
+    flow_value_snip = flow_value[time_index_left:]
+    flow_time_snip = flow_time[time_index_left:]
+    volume_snip = volume_calc(flow_value_snip, flow_time_snip)
+    sample_volumes.append(volume_snip)
+
+    vol_total = sum(sample_volumes)
+    volume_allocated = np.empty(len(sample_volumes))
+    for ss in range(len(sample_volumes)):
+        volume_allocated[ss] = comp_vol * sample_volumes[ss] / vol_total
+    return volume_allocated
+
+
+def take_closest(myList, myNumber):
+    """
+    Assumes myList is sorted. Returns closest value to myNumber.
+
+    If two numbers are equally close, return the smallest number.
+    """
+    pos = bisect_left(myList, myNumber)
+    if pos == 0:
+        return myList[0]
+    if pos == len(myList):
+        return myList[-1]
+    before = myList[pos - 1]
+    after = myList[pos]
+    if after - myNumber < myNumber - before:
+        return after
+    else:
+        return before
+
+
+
 def main():
+    """
+    This subroutine drives the EMC calculator
+    """
+
+    # Read and convert data to SI units
     read_template()
     settings_SI()
 
-    Qin_SFSH, Q_exfil = fc.SandFilter_CV(y2_depth, y_time, Qex_flow, Qex_time)
+    # Map sample times to hydrograph
+    sample_value = match_sample_to_inflow(sample_time, flow_time, flow_value)
+    last_sample = list(sample_time)[-1]
 
-    print(Qin_SFSH, Q_exfil)
+    # Calculate the EMC composite volumes in the units given by comp_vol
+    volume = volume_alloc(sample_time, flow_time, flow_value, comp_vol)
+
+    print(len(sample_time))
+    print(len(volume))
+    print(volume)
+    print(sum(volume))
+
+    # Create hydrograph plot with samples overlaid
+    fig, ax = plt.subplots()
+    fig.suptitle('Wetland Outlet Hydrograph - Python')
+    ax.plot(flow_time, flow_value, color='Blue', label='Flow')
+    ax.plot(sample_time, sample_value, 'o', color='Green', label='Sample')
+    ax.set(xlabel="Time since start (s)", ylabel="Flowrate (cms)")
+    ax.legend()
+    plt.ylim([0, 0.012])
+    plt.xlim([0, last_sample])
+    plt.show()
 
     return
 

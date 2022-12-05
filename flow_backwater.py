@@ -7,8 +7,8 @@ from bisect import bisect_left
 
 # Hard-coded project parameters - Need to read from template
 surface_area_sf = 1262
-dim_width_ft = 20
-dim_length_ft = 10
+dim_width_ft = 50
+dim_length_ft = 25
 side_slope = .33
 radius_in = 6
 length_ft = 27.583
@@ -394,11 +394,11 @@ def surface_area(y2):
     This subroutine is used to calculate the surface area as a function of water depth above Sand Filter
     """
 
-    # Use trapezoidal approximation of BMP geometry to calculate additional surface area
-    additional_sa = (dim_width_m + 2*y2*side_slope) * (dim_length_m + 2*y2*side_slope)
+    # Use trapezoidal approximation of BMP geometry to calculate new surface area
+    new_sa = (dim_width_m + 2*y2*side_slope) * (dim_length_m + 2*y2*side_slope)
 
     # The water free surface area is returned as the Sand Filter surface area + the trapezoidal prism contribution
-    return surface_area_m2 + additional_sa
+    return new_sa
 
 
 def timeseries_mask_to_depth(y_time, Qex_flow, Qex_time):
@@ -535,19 +535,19 @@ def determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nManni
         emc_alloc = volume_alloc(sample_time, y_time, Q_exfil, composite_volume_total_L)
         result = [round(item, 3) for item in emc_alloc]
 
-        fig, ax = plt.subplots()
-        fig.suptitle('ASF In/Out Flowrates vs Time - EMC Composite Instructions \n' + str(result))
-        ax.plot(y_time, Qin_SFSH, color='Red', label='Qin_StorageCV')
-        ax.plot(y_time, Q_exfil, color='Green', label='Qout_Exfiltration')
-        # ax.plot(Qex_time, Qex_flow, color='Green', label='Q_exfil')
-        ax.plot(y_time, Qin_energy, color='Blue', label='Qin_EnergyEq')
-        ax.plot(sample_time, Qin_sample, 'o', color='Purple', label='Inflow Sampled')
-        # ax.plot(y_time, Qin_mannings, color='Black', label='Qin_mannings')
-        ax.set(xlabel="Time since start (s)", ylabel="Flowrate (cms)")
-        ax.legend()
-        plt.show()
-        quit()
-        # fig.savefig("./Sensitivity Analysis for Manning's n/nMannings %s.png" % str(round(nMannings[nM], 4)))
+        # fig, ax = plt.subplots()
+        # fig.suptitle('ASF In/Out Flowrates vs Time - EMC Composite Instructions \n' + str(result))
+        # ax.plot(y_time, Qin_SFSH, color='Red', label='Qin_StorageCV')
+        # ax.plot(y_time, Q_exfil, color='Green', label='Qout_Exfiltration')
+        # # ax.plot(Qex_time, Qex_flow, color='Green', label='Q_exfil')
+        # ax.plot(y_time, Qin_energy, color='Blue', label='Qin_EnergyEq')
+        # ax.plot(sample_time, Qin_sample, 'o', color='Purple', label='Inflow Sampled')
+        # # ax.plot(y_time, Qin_mannings, color='Black', label='Qin_mannings')
+        # ax.set(xlabel="Time since start (s)", ylabel="Flowrate (cms)")
+        # ax.legend()
+        # plt.show()
+        # quit()
+        # # fig.savefig("./Sensitivity Analysis for Manning's n/nMannings %s.png" % str(round(nMannings[nM], 4)))
 
     
     original_stdout = sys.stdout
@@ -558,7 +558,8 @@ def determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nManni
         sys.stdout = original_stdout # Reset the standard output to its original value
     return Qin_energy
 
-Qin_energy = determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nMannings, sample_time)
+
+# Qin_energy = determine_hydrographs(y1_depth, y2_depth, y_time, Qex_flow, Qex_time, nMannings, sample_time)
 
 
 
