@@ -225,7 +225,10 @@ def main():
 
     print(len(sample_time))
     print(len(volume))
-    print(volume)
+    round_volume = [round(num) for num in list(volume)]
+    print("EMC Compositing Volumes (mL)")
+    print(round_volume)
+    print("")
     print(sum(volume))
 
     # Create hydrograph plot with samples overlaid
